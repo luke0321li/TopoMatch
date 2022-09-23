@@ -4,6 +4,7 @@ import numpy as np
 from scipy.spatial.distance import cdist
 from scipy.stats import pearsonr
 from matching.games import StableMarriage
+import itertools
 
 def rcors(m1, m2):
     # Single-cluster sorted correlations between to matrices
@@ -27,12 +28,12 @@ def double_center(m):
 
 def dcov(m1, m2):
     # Compute distance covariance of two double-centered matrices 
-    return np.sum(m1 * m2) / (len(m1) * len(m1))
+    return np.sqrt(np.sum(m1 * m2) / (len(m1) * len(m1)))
 
 
 def dvar(m):
     # Compute distance variance of two double-centered matrices
-    return np.sum(m ** 2) / (len(m) * len(m))
+    return np.sqrt(np.sum(m ** 2) / (len(m) * len(m)))
 
 
 def dcor(m1, m2):
@@ -53,7 +54,10 @@ def match(m):
         women[i] = np.flip(np.argsort(m[:, i]))
     game = StableMarriage.create_from_dictionaries(men, women)
     match = game.solve()
-    return match
+    result = [0] * len(m)
+    for key in match:
+        result[key.name] = match[key].name
+    return result
 
 
 def sym_perm_matrix(m):
@@ -94,7 +98,7 @@ def generate_batch(mus, sds, weights, n_cells=1000, n_genes=100):
 
 def compute_distances(cells, labels, metric='euclidean'):
     # Compute pairwise average distances between clusters
-    n_groups = np.max(labels) + 1
+    n_groups = len(labels) + 1
     matrix = np.zeros((n_groups, n_groups))
     for i in range(n_groups):
         cells_1 = cells[np.asarray(labels == i).reshape(-1)]
@@ -109,27 +113,68 @@ def compute_distances(cells, labels, metric='euclidean'):
 def match_two_experiments(cells_1, labels_1, cells_2, labels_2, metric='euclidean'):
     m1 = compute_distances(cells_1, labels_1, metric)
     m2 = compute_distances(cells_2, labels_2, metric)
-    match_res = match(rcors(m2, m1))
+#     match_res = match(rcors(m2, m1))
+#     match_res, _ = brute_match(m1, m2)
+    match_res = brute_match_perm(m1, m2)
     return match_res
 
 
-def main():
-    mus = [[0, 0], [3, 3], [3, 0], [1.5, 6], [6, -1.5], [3, 10]]
-    sds = [[1, 1], [0.1, 0.1], [1, 1], [0.5, 0.1], [0.1, 0.5], [0.5, 0.5]]
-    weights = [[0.2, 0.2, 0.2, 0.1, 0.1, 0.2], [0.2, 0.25, 0.15, 0.1, 0.15, 0.15]]
-    n_iter = 100
-    accs = np.zeros(n_iter)     
-    for i in range(n_iter):
-        cells_1, labels_1 = generate_batch(mus, sds, weights[0])
-        cells_2, labels_2 = generate_batch(mus, sds, weights[1])
-        match_res = match_two_experiments(cells_1, labels_1, cells_2, labels_2)
-        result = [0] * len(mus)
-        for key in match_res:
-            result[key.name] = match_res[key].name
-        accs[i] = np.sum([result[i] == i for i in range(len(mus))], dtype=float) / len(mus)
-    print("Accuracy: %.5f" % np.mean(accs))
+def convert_to_ranks(m):
+    lower = np.tril(m).flatten()
+    lower = lower[lower != 0]
+    s = list(np.sort(lower))
+    ranks = [s.index(i) + 1 for i in lower]
+    m2 = np.zeros(m.shape)
+    lower = list(lower)
+    for i in range(m.shape[0]):
+        for j in range(m.shape[1]):
+            if m[i][j] != 0:
+                m2[i][j] = ranks[lower.index(m[i][j])]
+    return m2
 
 
-if __name__ == "__main__":
-    main()
+def brute_match(m1, m2, use_rank=False):
+    if use_rank:
+        m1 = convert_to_ranks(m1)
+        m2 = convert_to_ranks(m2)
+    maxd = 0
+    max_map = None
+    for i in range(2000):
+        m2_p, m2_map = sym_perm_matrix(m2)
+        d = dcor(m1, m2_p)
+        if d > maxd:
+            maxd = d
+            max_map = m2_map
+    return max_map, maxd
+
+
+def brute_match_perm(m1, m2):
+    maxd = 0
+    max_map = None
+    perms = list(itertools.permutations(np.arange(len(m1))))
+    for p in perms:
+        m2_p = m2[list(p)][:, list(p)]
+        d = dcor(m1, m2_p)
+        if d > maxd:
+            maxd = d
+            max_map = p
+    return max_map, maxd
+
+# def main():
+#     mus = [[0, 0], [3, 3], [3, 0], [1.5, 6], [6, -1.5], [3, 10]]
+#     sds = [[1, 1], [0.1, 0.1], [1, 1], [0.5, 0.1], [0.1, 0.5], [0.5, 0.5]]
+#     weights = [[0.2, 0.2, 0.2, 0.1, 0.1, 0.2], [0.2, 0.25, 0.15, 0.1, 0.15, 0.15]]
+#     n_iter = 100
+#     accs = np.zeros(n_iter)     
+#     for i in range(n_iter):
+#         cells_1, labels_1 = generate_batch(mus, sds, weights[0])
+#         cells_2, labels_2 = generate_batch(mus, sds, weights[1])
+#         result = match_two_experiments(cells_1, labels_1, cells_2, labels_2)
+#         accs[i] = np.sum([result[i] == i for i in range(len(mus))], dtype=float) / len(mus)
+#     return accs
+#     print("Accuracy: %.5f" % np.mean(accs))
+
+
+# if __name__ == "__main__":
+#     main()
           
